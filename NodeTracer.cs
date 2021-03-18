@@ -31,7 +31,7 @@ namespace NodeTracer
         Harmony harmony;
         void Awake()
         {
-            //this.repositoryUrl = "https://github.com/Conqu3red/NodeTracer/"; // repo to check for updates from
+            this.repositoryUrl = "https://github.com/Conqu3red/Node-Tracer/"; // repo to check for updates from
 			if (instance == null) instance = this;
             // Use this if you wish to make the mod trigger cheat mode ingame.
             // Set this true if your mod effects physics or allows mods that you can't normally do.
