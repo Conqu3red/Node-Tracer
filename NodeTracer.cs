@@ -21,7 +21,7 @@ namespace NodeTracer
         public new const string
             PluginGuid = "polytech.NodeTracer",
             PluginName = "Node Tracer",
-            PluginVersion = "1.0.0";
+            PluginVersion = "1.0.1";
         
         public static NodeTracer instance;
         public static ConfigEntry<bool> modEnabled, traceAllSplitParts;
