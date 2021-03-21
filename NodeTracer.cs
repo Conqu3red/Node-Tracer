@@ -21,11 +21,11 @@ namespace NodeTracer
         public new const string
             PluginGuid = "polytech.NodeTracer",
             PluginName = "Node Tracer",
-            PluginVersion = "1.0.1";
+            PluginVersion = "1.0.2";
         
         public static NodeTracer instance;
-        public static ConfigEntry<bool> modEnabled, traceAllSplitParts;
-        public static ConfigEntry<BepInEx.Configuration.KeyboardShortcut> toggleHotkey, selectAllEnabledHotkey;
+        public static ConfigEntry<bool> modEnabled, traceAllSplitParts, keepTraceLinesAfterSimEnd;
+        public static ConfigEntry<BepInEx.Configuration.KeyboardShortcut> toggleHotkey, selectAllEnabledHotkey, clearTracesHotKey;
         public static ConfigEntry<Color> traceColor, split2Color, split3Color;
         public static ConfigEntry<int> TraceLength;
         Harmony harmony;
@@ -44,13 +44,15 @@ namespace NodeTracer
 
             toggleHotkey = Config.Bind(PluginName, "Toggle hotkey", new BepInEx.Configuration.KeyboardShortcut(KeyCode.F9), "Keybind to toggle selected joints tracing");
             selectAllEnabledHotkey = Config.Bind(PluginName, "Select all joints that will be traced", new BepInEx.Configuration.KeyboardShortcut(KeyCode.F10), "Keybind to select every joint that will be traced");
+            clearTracesHotKey = Config.Bind(PluginName, "Clear trace lines", new BepInEx.Configuration.KeyboardShortcut(KeyCode.None), "Keybind to clear trace lines");
             traceColor = Config.Bind(PluginName, "Trace color", Color.blue, "Color for selected nodes and traced nodes to appear as");
             split2Color = Config.Bind(PluginName, "Trace color (2nd split parts)", Color.blue, "Color for selected nodes that split as 2 to appear as");
             split3Color = Config.Bind(PluginName, "Trace color (3rd split parts)", Color.blue, "Color for selected nodes that split as 3 to appear as");
             
             TraceLength = Config.Bind(PluginName, "Trace length", 100, "How many frames to store traced data for");
             traceAllSplitParts = Config.Bind(PluginName, "Trace all split parts", true, "Toggle for whether to trace all split parts or just the original node");
-
+            keepTraceLinesAfterSimEnd = Config.Bind(PluginName, "Keep Trace Lines after sim end", false);
+            
             harmony = new Harmony("polytech.NodeTracer");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
@@ -89,9 +91,11 @@ namespace NodeTracer
         public void Update(){
             if (toggleHotkey.Value.IsUp()){
                 TraceManager.ToggleSelectedNodes();
+                TraceManager.ToggleSelectedVehicle();
+
             }
             if (selectAllEnabledHotkey.Value.IsUp() && GameStateManager.GetState() == GameState.BUILD){
-                foreach (TraceInfo t in TraceManager.nodeData.Values){
+                foreach (NodeTraceInfo t in TraceManager.nodeData.Values){
                     BridgeJoint j = BridgeJoints.FindByGuid(t.nodeGuid);
                     BridgeSelectionSet.CancelSelection();
                     if (j){
@@ -100,8 +104,42 @@ namespace NodeTracer
                 }
                 BridgeSelectionSet.DeSelectAllEdges();
             }
+            if (clearTracesHotKey.Value.IsUp()){
+                List<string> keys = new List<string>(TraceManager.nodeData.Keys);
+                foreach (string guid in keys){
+                    BridgeJoint j = BridgeJoints.FindByGuid(guid);
+                    TraceManager.nodeData[guid].history = new List<Vector3>();
+                    foreach (NodeTraceInfo t in TraceManager.nodeData[guid].splitNodes){
+                        t.history.Clear();
+                    }
+                }
+                foreach (VehicleTraceInfo info in TraceManager.vehicleData.Values){
+                    info.wheelHistory.Clear();
+                }
+            }
+
+            PolyPhysics.Viewers.GlDrawer.Clear();
             
-        }
+            List<string> trace_keys = new List<string>(TraceManager.nodeData.Keys);
+            foreach (string guid in trace_keys){
+                NodeTraceInfo info = TraceManager.nodeData[guid];
+                info.Draw();
+                foreach (TraceInfo splitPart in info.splitNodes){
+                    splitPart.Draw();
+                }
+            }
+            trace_keys = new List<string>(TraceManager.vehicleData.Keys);
+            foreach (string guid in trace_keys){
+                Vehicle v = Vehicles.FindByGuid(guid);
+                if (v == null){
+                    TraceManager.vehicleData.Remove(guid);
+                    continue;
+                }
+                VehicleTraceInfo info = TraceManager.vehicleData[guid];
+                info.Draw();
+            }
+		}
+		    
 
         public void createTripleSplitTextures(BridgeJoint j){
             // horrible code to read from a unreadable texture (j.m_Split3_B.sprite.texture)
@@ -147,7 +185,7 @@ namespace NodeTracer
         [HarmonyPatch(typeof(BridgePhysics), "FixedUpdateManual")]
         public static class UpdateDisplayPatch {
             public static void Postfix(){
-                PolyPhysics.Viewers.GlDrawer.Clear();
+                //PolyPhysics.Viewers.GlDrawer.Clear();
                 
                 List<string> keys = new List<string>(TraceManager.nodeData.Keys);
                 foreach (string guid in keys){
@@ -158,11 +196,10 @@ namespace NodeTracer
                         continue;
                     }
                     info.UpdateManual();
-                    info.Draw();
-                    foreach (TraceInfo splitPart in info.splitNodes){
-                        info.UpdateManual();
-                        splitPart.Draw();
-                    }
+                    //info.Draw();
+                    //foreach (TraceInfo splitPart in info.splitNodes){
+                    //    splitPart.Draw();
+                    //}
                 }
             }
         }
@@ -173,12 +210,16 @@ namespace NodeTracer
                 yield return AccessTools.Method(typeof(GameStateSim), "Enter");
                 yield return AccessTools.Method(typeof(GameStateSim), "Exit");
             }
-            public static void Postfix(){
+            public static void Postfix(MethodInfo __originalMethod){
+                //instance.Logger.LogInfo(__originalMethod.Name);
+                if (__originalMethod.Name == "Exit" && keepTraceLinesAfterSimEnd.Value) return;
                 List<string> keys = new List<string>(TraceManager.nodeData.Keys);
                 foreach (string guid in keys){
-                    BridgeJoint j = BridgeJoints.FindByGuid(guid);
                     TraceManager.nodeData[guid].history = new List<Vector3>();
                     TraceManager.nodeData[guid].splitNodes.Clear();
+                }
+                foreach (VehicleTraceInfo info in TraceManager.vehicleData.Values){
+                    info.wheelHistory.Clear();
                 }
             }
         }
@@ -187,7 +228,7 @@ namespace NodeTracer
         public static class SetColorPatch {
             public static void Postfix(Color color, Color splitColor, BridgeJoint __instance){
                 //if (NodeTracer.instance.icon3Split == null) NodeTracer.instance.createTripleSplitTextures(__instance);
-                TraceInfo l;
+                NodeTraceInfo l;
                 if (TraceManager.nodeData.TryGetValue(__instance.m_Guid, out l)){
                     color = l.color;
                     //splitColor = l.split2_color;
@@ -213,35 +254,50 @@ namespace NodeTracer
         public static class NodeSplitPatch {
             public static void Postfix(PolyPhysics.Node src, PolyPhysics.Node duplicate, PolyPhysics.Part duplicatePart){
                 if (!NodeTracer.traceAllSplitParts.Value || !modEnabled.Value) return;
-                TraceInfo t = TraceManager.findByPhysicsNode(src);
+                NodeTraceInfo t = TraceManager.findByPhysicsNode(src);
                 if (t == null) return;
-                TraceInfo _t = new TraceInfo(t.color, t.split2_color, t.split3_color, duplicate);
+                NodeTraceInfo _t = new NodeTraceInfo(t.color, t.split2_color, t.split3_color, duplicate);
                 _t.splitPart = duplicatePart;
                 t.splitNodes.Add(_t);
+            }
+        }
+
+        [HarmonyPatch(typeof(PolyPhysics.Vehicle), "Execute")]
+        public static class VehicleStep {
+            public static void Postfix(PolyPhysics.Vehicle __instance, PolyPhysics.Rigidbody[] ___wheels){
+                VehicleTraceInfo t = TraceManager.FindByPhysicsVehicle(__instance);
+                if (t == null) return;
+                t.UpdateManual(___wheels);
             }
         }
     
     }
 
     public class TraceInfo {
-        public TraceInfo(){
+        public virtual void UpdateManual(){}
+        public virtual void Draw(){}
+        public static Vector3 offset = new Vector3(0,0,10f);
+    }
+
+    public class NodeTraceInfo : TraceInfo {
+        public NodeTraceInfo(){
             this.history = new List<Vector3>();
         }
-        public TraceInfo(Color color, Color split2_color, Color split3_color, string nodeGuid){
+        public NodeTraceInfo(Color color, Color split2_color, Color split3_color, string nodeGuid){
             this.color = color;
             this.split2_color = split2_color;
             this.split3_color = split3_color;
             this.history = new List<Vector3>();
             this.nodeGuid = nodeGuid;
         }
-        public TraceInfo(Color color, Color split2_color, Color split3_color, PolyPhysics.Node splitNode){
+        public NodeTraceInfo(Color color, Color split2_color, Color split3_color, PolyPhysics.Node splitNode){
             this.color = color;
             this.split2_color = split2_color;
             this.split3_color = split3_color;
             this.history = new List<Vector3>();
             this.splitNode = splitNode;
         }
-        public void UpdateManual(){
+        public override void UpdateManual(){
             PolyPhysics.Node node = BridgeJoints.FindByGuid(nodeGuid)?.m_PhysicsNode;
             if (node == null) node = splitNode;
             if (node != null){
@@ -256,7 +312,7 @@ namespace NodeTracer
                 }
             }
         }
-        public void Draw(){
+        public override void Draw(){
             Vector3 prevPos = new Vector3();
             Vector3 pos;
             PolyPhysics.Viewers.GlDrawer.color = color;
@@ -265,7 +321,10 @@ namespace NodeTracer
             for (int c = 0; c < history.Count; c++){
                 pos = history[c];
                 if (c != 0){
-                    PolyPhysics.Viewers.GlDrawer.DrawLine(pos, prevPos);
+                    PolyPhysics.Viewers.GlDrawer.DrawLine(
+                        pos + offset + node_offset, 
+                        prevPos + offset + node_offset
+                    );
                 }
                 prevPos = pos;
             }
@@ -278,17 +337,65 @@ namespace NodeTracer
         public PolyPhysics.Node splitNode;
         public List<TraceInfo> splitNodes = new List<TraceInfo>();
         public PolyPhysics.Part splitPart;
+        public static Vector3 node_offset = new Vector3(0,0,-1.5f);
+    }
+    public class VehicleTraceInfo : TraceInfo {
+        public VehicleTraceInfo(){
+            
+        }
+        public VehicleTraceInfo(Color color, string vehicleGuid){
+            this.color = color;
+            this.vehicleGuid = vehicleGuid;
+        }
+        public void UpdateManual(PolyPhysics.Rigidbody[] wheels){
+            for (int i = 0; i < wheels.Length; i++){
+                if (wheelHistory.Count <= i){
+                    int amount_to_add = i - wheelHistory.Count + 1;
+			        for (int j = 0; j < amount_to_add; j++){
+			        	wheelHistory.Add(new List<Vector3>());
+			        }
+                }
+                wheelHistory[i].Add(wheels[i].t2.position);
+                
+                if (wheelHistory[i].Count > Mathf.Max(2, NodeTracer.TraceLength.Value)){
+                    wheelHistory[i].RemoveRange(0, wheelHistory[i].Count - NodeTracer.TraceLength.Value);
+                }
+            }
+
+        }
+        public override void Draw(){
+            Vector3 prevPos = new Vector3();
+            Vector3 pos;
+            PolyPhysics.Viewers.GlDrawer.color = color;
+            foreach (List<Vector3> history in wheelHistory){
+                for (int c = 0; c < history.Count; c++){
+                    pos = history[c];
+                    if (c != 0){
+                        PolyPhysics.Viewers.GlDrawer.DrawLine(
+                            pos + offset, 
+                            prevPos + offset
+                        );
+                    }
+                    prevPos = pos;
+                }
+            }
+        }
+
+        public Color color;
+        public string vehicleGuid;
+        public List<List<Vector3>> wheelHistory = new List<List<Vector3>>{};
     }
 
     public static class TraceManager {
-        public static Dictionary<string, TraceInfo> nodeData = new Dictionary<string, TraceInfo>();
+        public static Dictionary<string, NodeTraceInfo> nodeData = new Dictionary<string, NodeTraceInfo>();
+        public static Dictionary<string, VehicleTraceInfo> vehicleData = new Dictionary<string, VehicleTraceInfo>();
         public static void ToggleNode(string guid){
-            TraceInfo l;
+            NodeTraceInfo l;
             if (nodeData.TryGetValue(guid, out l)){
                 nodeData.Remove(guid);
             }
             else {
-                nodeData[guid] = new TraceInfo(
+                nodeData[guid] = new NodeTraceInfo(
                     NodeTracer.traceColor.Value, 
                     NodeTracer.split2Color.Value, 
                     NodeTracer.split3Color.Value, 
@@ -303,10 +410,45 @@ namespace NodeTracer
             }
         }
 
-        public static TraceInfo findByPhysicsNode(PolyPhysics.Node node){
-            foreach (TraceInfo t in nodeData.Values){
+        public static NodeTraceInfo findByPhysicsNode(PolyPhysics.Node node){
+            foreach (NodeTraceInfo t in nodeData.Values){
                 BridgeJoint j = BridgeJoints.FindByGuid(t.nodeGuid);
                 if (j?.m_PhysicsNode == node) return t;
+            }
+            return null;
+        }
+
+        public static void ToggleVehicle(Vehicle vehicle){
+            VehicleTraceInfo l;
+            if (vehicleData.TryGetValue(vehicle.m_Guid, out l)){
+                vehicleData.Remove(vehicle.m_Guid);
+            }
+            else {
+                vehicleData[vehicle.m_Guid] = new VehicleTraceInfo(
+                    NodeTracer.traceColor.Value,
+                    vehicle.m_Guid
+                );
+            }
+        }
+
+        public static void ToggleSelectedVehicle(){
+            if (GameStateBuild.m_HoverSandboxItem != null)
+		    {
+                Vehicle vehicle = null;
+		        if (GameStateBuild.m_HoverSandboxItem.m_Type == SandboxItemType.VEHICLE)
+		        {
+		        	vehicle = GameStateBuild.m_HoverSandboxItem.GetComponent<Vehicle>();
+		        }
+                if (vehicle != null){
+                    ToggleVehicle(vehicle);
+                }
+            }
+        }
+
+        public static VehicleTraceInfo FindByPhysicsVehicle(PolyPhysics.Vehicle vehicle){
+            foreach (VehicleTraceInfo t in vehicleData.Values){
+                Vehicle j = Vehicles.FindByGuid(t.vehicleGuid);
+                if (j?.Physics == vehicle) return t;
             }
             return null;
         }
