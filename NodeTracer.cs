@@ -9,7 +9,6 @@ using System.Collections.Generic;
 using BepInEx.Configuration;
 using System.Linq;
 using System.Diagnostics;
-using Vectrosity;
 
 namespace NodeTracer
 {
@@ -31,7 +30,6 @@ namespace NodeTracer
         public static ConfigEntry<Color> traceColor, split2Color, split3Color;
         public static ConfigEntry<int> TraceLength;
         public static ConfigEntry<float> LineWidth;
-        public static ConfigEntry<Joins> JoinType;
         Harmony harmony;
         public Sprite icon3Split;
         void Awake()
@@ -53,12 +51,11 @@ namespace NodeTracer
             split2Color = Config.Bind(PluginName, "Trace color (2nd split parts)", Color.blue, "Color for selected nodes that split as 2 to appear as");
             split3Color = Config.Bind(PluginName, "Trace color (3rd split parts)", Color.blue, "Color for selected nodes that split as 3 to appear as");
             
-            TraceLength = Config.Bind(PluginName, "Trace length", 100, new ConfigDescription("How many frames to store traced data for", new AcceptableValueRange<int>(1, 16383)));
-            LineWidth = Config.Bind(PluginName, "Line Width", 5f, "Width of traced lines");
+            TraceLength = Config.Bind(PluginName, "Trace length", 100, "How many frames to store traced data for");
+            LineWidth = Config.Bind(PluginName, "Line Width", 0.05f, "Width of traced lines");
             traceAllSplitParts = Config.Bind(PluginName, "Trace all split parts", true, "Toggle for whether to trace all split parts or just the original node");
             keepTraceLinesAfterSimEnd = Config.Bind(PluginName, "Keep Trace Lines after sim end", false);
-            JoinType = Config.Bind(PluginName, "Join Type", Joins.Weld, "Control how lines are joined together.");
-
+            
             harmony = new Harmony("polytech.NodeTracer");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
@@ -94,20 +91,6 @@ namespace NodeTracer
             modEnabled.Value = false;
         }
 
-        [HarmonyPatch(typeof(Cameras))]
-        [HarmonyPatch("Awake")]
-        class StartupPatch {
-            static void Postfix(Cameras __instance){
-                var camera = Cameras.MainCamera();
-                if (camera){
-                    VectorLine.SetCamera3D(camera);
-                }
-                else {
-                    instance.Logger.LogError("Main Camera is null!");
-                }
-            }
-        }
-
         public void SelectJointsThatWillBeTraced(){
             BridgeSelectionSet.CancelSelection();
             foreach (NodeTraceInfo t in TraceManager.nodeData.Values){
@@ -122,11 +105,9 @@ namespace NodeTracer
         public void ClearTraceLines(){
             foreach (NodeTraceInfo n in TraceManager.nodeData.Values){
                 n.ClearLines();
-                n.Draw();
             }
             foreach (VehicleTraceInfo info in TraceManager.vehicleData.Values){
                 info.ClearLines();
-                info.Draw();
             }
         }
 
@@ -161,8 +142,6 @@ namespace NodeTracer
                     TraceManager.ToggleVehicle(v);
                     continue;
                 }
-                VehicleTraceInfo info = TraceManager.vehicleData[guid];
-                info.Draw();
             }
 		}
 		    
@@ -224,11 +203,10 @@ namespace NodeTracer
                         continue;
                     }
                     info.UpdateManual();
-                    info.Draw();
                 }
                 stopwatch.Stop();
                 TimeSpan ts = stopwatch.Elapsed;
-                instance.Logger.LogInfo($"Update Nodes in {ts.TotalMilliseconds} ms");
+                //instance.Logger.LogInfo($"Update Nodes in {ts.TotalMilliseconds} ms");
             }
         }
 
@@ -283,7 +261,7 @@ namespace NodeTracer
                 if (!NodeTracer.traceAllSplitParts.Value || !modEnabled.Value) return;
                 NodeTraceInfo t = TraceManager.findByPhysicsNode(src);
                 if (t == null) return;
-                NodeTraceInfo _t = new NodeTraceInfo(t.color, t.split2_color, t.split3_color, t.width, t.joinType, duplicate);
+                NodeTraceInfo _t = new NodeTraceInfo(t.color, t.split2_color, t.split3_color, t.width, duplicate);
                 _t.splitPart = duplicatePart;
                 _t.UpdateLineColor();
                 t.splitNodes.Add(_t);
@@ -302,48 +280,52 @@ namespace NodeTracer
     
         // Trace Classes:
         public class TraceInfo {
-            public virtual void Draw(){}
             public virtual void Destroy(){}
             public virtual void ClearLines(){}
-            public static Vector3 offset = new Vector3(0,0,10f);
+            public static Vector3 offset = new Vector3(0, 0, 10f);
         }
 
         public class NodeTraceInfo : TraceInfo {
+            public void CreateRenderer()
+            {
+                currentLine = new GameObject();
+                lineRenderer = currentLine.AddComponent<LineRenderer>();
+                lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+                lineRenderer.startWidth = width;
+                lineRenderer.endWidth = width;
+                UpdateLineColor();
+            }
             public NodeTraceInfo(){
-                this.line = new VectorLine(Guid.NewGuid().ToString(), new List<Vector3>(), 1f, LineType.Continuous, joinType);
-                UpdateLineColor();
+                CreateRenderer();
             }
-            public NodeTraceInfo(Color color, Color split2_color, Color split3_color, float width, Joins joinType, string nodeGuid){
+            public NodeTraceInfo(Color color, Color split2_color, Color split3_color, float width, string nodeGuid){
                 this.color = color;
                 this.split2_color = split2_color;
                 this.split3_color = split3_color;
                 this.width = width;
-                this.joinType = joinType;
                 this.nodeGuid = nodeGuid;
-                this.line = new VectorLine(this.nodeGuid, new List<Vector3>(), this.width, LineType.Continuous, joinType);
-                UpdateLineColor();
+                CreateRenderer();
             }
-            public NodeTraceInfo(Color color, Color split2_color, Color split3_color, float width, Joins joinType, PolyPhysics.Node splitNode){
+            public NodeTraceInfo(Color color, Color split2_color, Color split3_color, float width, PolyPhysics.Node splitNode){
                 this.color = color;
                 this.split2_color = split2_color;
                 this.split3_color = split3_color;
                 this.width = width;
-                this.joinType = joinType;
                 this.splitNode = splitNode;
-                this.line = new VectorLine(this.nodeGuid, new List<Vector3>(), this.width, LineType.Continuous, joinType);
-                UpdateLineColor();
+                CreateRenderer();
             }
 
             public override void Destroy(){
                 //instance.Logger.LogInfo("destruct NodeTraceInfo");
-                VectorLine.Destroy(ref line);
+                UnityEngine.Object.Destroy(currentLine);
                 foreach (NodeTraceInfo t in splitNodes)
                     t.Destroy();
             }
 
             public override void ClearLines()
             {
-                line.points3.Clear();
+                points.Clear();
+                pushLinesToRenderer();
                 foreach (NodeTraceInfo t in splitNodes){
                     t.ClearLines();
                 }
@@ -353,10 +335,12 @@ namespace NodeTracer
                 PolyPhysics.Node node = BridgeJoints.FindByGuid(nodeGuid)?.m_PhysicsNode;
                 if (node == null) node = splitNode;
                 if (node != null){
-                    line.points3.Add((Vector3)node.pos + node_offset);
-                    if (line.points3.Count > Mathf.Max(2, NodeTracer.TraceLength.Value)){
-                        line.points3.RemoveRange(0, line.points3.Count - NodeTracer.TraceLength.Value);
+                    points.Add((Vector3)node.pos + node_offset);
+                    if (points.Count > Mathf.Max(2, NodeTracer.TraceLength.Value)){
+                        // remove oldest lines
+                        points.RemoveRange(0, points.Count - NodeTracer.TraceLength.Value);
                     }
+                    pushLinesToRenderer();
                 }
             }
             public void UpdateManual(){
@@ -368,28 +352,30 @@ namespace NodeTracer
                     }
                 }
             }
-            public override void Draw(){
-                line.Draw3D();
-                
-                if (NodeTracer.traceAllSplitParts.Value){
-                    foreach (NodeTraceInfo t in splitNodes){
-                        t.Draw();
-                    }
-                }
+            
+            public void pushLinesToRenderer()
+            {
+                lineRenderer.positionCount = points.Count;
+                lineRenderer.SetPositions(points.ToArray());
             }
 
             public void UpdateLineColor(){
                 var c = color;
                 if (splitPart == PolyPhysics.Part.B) c = split2_color;
                 if (splitPart == PolyPhysics.Part.C) c = split3_color;
-                if (line.color != c) line.color = c;
+                if (lineRenderer.startColor != c)
+                {
+                    lineRenderer.startColor = c;
+                    lineRenderer.endColor = c;
+                }
             }
             public Color color;
             public Color split2_color;
             public Color split3_color;
             public float width;
-            public Joins joinType = Joins.None;
-            public VectorLine line;
+            private GameObject currentLine;
+            private LineRenderer lineRenderer;
+            private List<Vector3> points = new List<Vector3>();
             public string nodeGuid;
             public PolyPhysics.Node splitNode;
             public List<NodeTraceInfo> splitNodes = new List<NodeTraceInfo>();
@@ -398,25 +384,44 @@ namespace NodeTracer
         }
         public class VehicleTraceInfo : TraceInfo {
             public VehicleTraceInfo(){
-                
             }
-            public VehicleTraceInfo(Color color, float width, Joins joinType, string vehicleGuid){
+            public VehicleTraceInfo(Color color, float width, string vehicleGuid){
                 this.color = color;
                 this.width = width;
-                this.joinType = joinType;
                 this.vehicleGuid = vehicleGuid;
             }
+
+            public LineRenderer makeLineRenderer()
+            {
+                var currentObj = new GameObject();
+                gameObjects.Add(currentObj);
+                var lr = currentObj.AddComponent<LineRenderer>();
+                lr.material = new Material(Shader.Find("Sprites/Default"));
+                lr.startWidth = width;
+                lr.endWidth = width;
+                lr.startColor = color;
+                lr.endColor = color;
+                return lr;
+            }
             public override void Destroy(){
-                for (int i = 0; i < wheelTracers.Count; i++){
-                    VectorLine line = wheelTracers[i];
-                    VectorLine.Destroy(ref line);
-                }
+                foreach (var currentObj in gameObjects)
+                    UnityEngine.Object.Destroy(currentObj);
             }
 
             public override void ClearLines(){
-                foreach (VectorLine line in wheelTracers){
-                    line.points3.Clear();
+                foreach (var line in wheelTracers){
+                    line.positionCount = 0;
                 }
+                foreach (var points in wheelPoints)
+                {
+                    points.Clear();
+                }
+            }
+
+            public void pushLinesToRenderer(LineRenderer lineRenderer, List<Vector3> points)
+            {
+                lineRenderer.positionCount = points.Count;
+                lineRenderer.SetPositions(points.ToArray());
             }
 
             public void UpdateManual(PolyPhysics.Rigidbody[] wheels){
@@ -424,29 +429,26 @@ namespace NodeTracer
                     if (wheelTracers.Count <= i){
                         int amount_to_add = i - wheelTracers.Count + 1;
                         for (int j = 0; j < amount_to_add; j++){
-                            wheelTracers.Add(new VectorLine(vehicleGuid, new List<Vector3>(), width, LineType.Continuous, joinType));
+                            wheelTracers.Add(makeLineRenderer());
+                            wheelPoints.Add(new List<Vector3>());
                         }
                     }
-                    wheelTracers[i].points3.Add(wheels[i].t2.position);
                     
-                    if (wheelTracers[i].points3.Count > Mathf.Max(2, NodeTracer.TraceLength.Value)){
-                        wheelTracers[i].points3.RemoveRange(0, wheelTracers[i].points3.Count - NodeTracer.TraceLength.Value);
+                    wheelPoints[i].Add(wheels[i].t2.position);
+                    
+                    if (wheelPoints[i].Count > Mathf.Max(2, NodeTracer.TraceLength.Value)){
+                        wheelPoints[i].RemoveRange(0, wheelPoints[i].Count - NodeTracer.TraceLength.Value);
                     }
-                }
-                Draw();
-            }
-            public override void Draw(){
-                foreach (VectorLine line in wheelTracers){
-                    line.SetColor(color);
-                    line.Draw3D();
+                    pushLinesToRenderer(wheelTracers[i], wheelPoints[i]);
                 }
             }
 
             public Color color;
             public float width;
-            public Joins joinType = Joins.None;
             public string vehicleGuid;
-            public List<VectorLine> wheelTracers = new List<VectorLine>();
+            public List<GameObject> gameObjects = new List<GameObject>();
+            public List<LineRenderer> wheelTracers = new List<LineRenderer>();
+            public List<List<Vector3>> wheelPoints = new List<List<Vector3>>();
         }
 
         public static class TraceManager {
@@ -464,7 +466,6 @@ namespace NodeTracer
                         split2Color.Value, 
                         split3Color.Value, 
                         LineWidth.Value,
-                        JoinType.Value,
                         guid
                     );
                 }
@@ -494,7 +495,6 @@ namespace NodeTracer
                     vehicleData[vehicle.m_Guid] = new VehicleTraceInfo(
                         traceColor.Value,
                         LineWidth.Value,
-                        JoinType.Value,
                         vehicle.m_Guid
                     );
                 }
