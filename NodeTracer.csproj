@@ -47,6 +47,9 @@
     <Reference Include="PolyTechFramework">
       <HintPath>Libraries\PolyTechFramework.dll</HintPath>
     </Reference>
+    <Reference Include="Vectrosity">
+      <HintPath>Libraries\Vectrosity.dll</HintPath>
+    </Reference>
 
   </ItemGroup>
 
