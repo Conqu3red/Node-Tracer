@@ -44,7 +44,7 @@ namespace NodeTracer
             
             modEnabled.SettingChanged += onEnableDisable;
 
-            toggleHotkey = Config.Bind(PluginName, "Toggle hotkey", new BepInEx.Configuration.KeyboardShortcut(KeyCode.F9), "Keybind to toggle selected joints tracing");
+            toggleHotkey = Config.Bind(PluginName, "Toggle tracer on selected nodes", new BepInEx.Configuration.KeyboardShortcut(KeyCode.F9), "Keybind to toggle tracing selected joints");
             selectAllEnabledHotkey = Config.Bind(PluginName, "Select all joints that will be traced", new BepInEx.Configuration.KeyboardShortcut(KeyCode.F10), "Keybind to select every joint that will be traced");
             clearTracesHotKey = Config.Bind(PluginName, "Clear trace lines", new BepInEx.Configuration.KeyboardShortcut(KeyCode.None), "Keybind to clear trace lines");
             traceColor = Config.Bind(PluginName, "Trace color", Color.blue, "Color for selected nodes and traced nodes to appear as");
