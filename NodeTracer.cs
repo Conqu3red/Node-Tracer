@@ -25,7 +25,7 @@ namespace NodeTracer
             PluginVersion = "1.0.3";
         
         public static NodeTracer instance;
-        public static ConfigEntry<bool> modEnabled, traceAllSplitParts, keepTraceLinesAfterSimEnd;
+        public static ConfigEntry<bool> modEnabled, traceAllSplitParts, keepTraceLinesOnSimEnter, keepTraceLinesAfterSimEnd;
         public static ConfigEntry<BepInEx.Configuration.KeyboardShortcut> toggleHotkey, selectAllEnabledHotkey, clearTracesHotKey;
         public static ConfigEntry<Color> traceColor, split2Color, split3Color;
         public static ConfigEntry<int> TraceLength;
@@ -54,6 +54,9 @@ namespace NodeTracer
             TraceLength = Config.Bind(PluginName, "Trace length", 100, "How many frames to store traced data for");
             LineWidth = Config.Bind(PluginName, "Line Width", 0.05f, "Width of traced lines");
             traceAllSplitParts = Config.Bind(PluginName, "Trace all split parts", true, "Toggle for whether to trace all split parts or just the original node");
+            
+            
+            keepTraceLinesOnSimEnter = Config.Bind(PluginName, "Keep Trace Lines on sim enter", false);
             keepTraceLinesAfterSimEnd = Config.Bind(PluginName, "Keep Trace Lines after sim end", false);
             
             harmony = new Harmony("polytech.NodeTracer");
@@ -102,15 +105,6 @@ namespace NodeTracer
             BridgeSelectionSet.DeSelectAllEdges();
         }
 
-        public void ClearTraceLines(){
-            foreach (NodeTraceInfo n in TraceManager.nodeData.Values){
-                n.ClearLines();
-            }
-            foreach (VehicleTraceInfo info in TraceManager.vehicleData.Values){
-                info.ClearLines();
-            }
-        }
-
         public void Update(){
             if (toggleHotkey.Value.IsUp()){
                 TraceManager.ToggleSelectedNodes();
@@ -121,7 +115,7 @@ namespace NodeTracer
                 SelectJointsThatWillBeTraced();
             
             if (clearTracesHotKey.Value.IsUp()){
-                ClearTraceLines();
+                TraceManager.ClearTraceLines();
             }
 
             
@@ -218,14 +212,8 @@ namespace NodeTracer
             }
             public static void Postfix(MethodInfo __originalMethod){
                 //instance.Logger.LogInfo(__originalMethod.Name);
-                if (__originalMethod.Name == "Exit" && keepTraceLinesAfterSimEnd.Value) return;
-                foreach (NodeTraceInfo t in TraceManager.nodeData.Values){
-                    t.ClearLines();
-                    t.splitNodes.Clear();
-                }
-                foreach (VehicleTraceInfo info in TraceManager.vehicleData.Values){
-                    info.ClearLines();
-                }
+                if ((__originalMethod.Name == "Enter" && keepTraceLinesOnSimEnter.Value) || (__originalMethod.Name == "Exit" && keepTraceLinesAfterSimEnd.Value)) return;
+                TraceManager.ClearTraceLines(removeSplitJoints: true);
             }
         }
 
@@ -521,6 +509,21 @@ namespace NodeTracer
                 }
                 return null;
             }
+
+            public static void ClearTraceLines(bool removeSplitJoints = false){
+            foreach (NodeTraceInfo n in nodeData.Values){
+                n.ClearLines();
+                if (removeSplitJoints) {
+                    foreach (var s in n.splitNodes)
+                        s.Destroy();
+                    
+                    n.splitNodes.Clear();
+                }
+            }
+            foreach (VehicleTraceInfo info in vehicleData.Values){
+                info.ClearLines();
+            }
+        }
         }
     }
 }
