@@ -22,14 +22,14 @@ namespace NodeTracer
         public new const string
             PluginGuid = "polytech.NodeTracer",
             PluginName = "Node Tracer",
-            PluginVersion = "1.0.3";
+            PluginVersion = "1.0.4";
 
         public static NodeTracer instance;
         public static ConfigEntry<bool> modEnabled, traceAllSplitParts, keepTraceLinesOnSimEnter, keepTraceLinesAfterSimEnd;
         public static ConfigEntry<BepInEx.Configuration.KeyboardShortcut> toggleHotkey, selectAllEnabledHotkey, clearTracesHotKey;
         public static ConfigEntry<Color> traceColor, split2Color, split3Color;
         public static ConfigEntry<int> TraceLength;
-        public static ConfigEntry<float> LineWidth;
+        public static ConfigEntry<float> LineWidth, traceZOffset;
         Harmony harmony;
         public Sprite icon3Split;
         void Awake()
@@ -53,6 +53,7 @@ namespace NodeTracer
 
             TraceLength = Config.Bind(PluginName, "Trace length", 100, "How many frames to store traced data for");
             LineWidth = Config.Bind(PluginName, "Line Width", 0.05f, "Width of traced lines");
+            traceZOffset = Config.Bind(PluginName, "Z Offset", -1.5f, "Z position of traced lines");
             traceAllSplitParts = Config.Bind(PluginName, "Trace all split parts", true, "Toggle for whether to trace all split parts or just the original node");
 
 
@@ -357,7 +358,7 @@ namespace NodeTracer
                 if (node == null) node = splitNode;
                 if (node != null)
                 {
-                    points.Add((Vector3)node.pos + node_offset);
+                    points.Add((Vector3)node.pos + new Vector3(0, 0, traceZOffset.Value));
                     if (points.Count > Mathf.Max(2, NodeTracer.TraceLength.Value))
                     {
                         // remove oldest lines
